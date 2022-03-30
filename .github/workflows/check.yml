@@ -1,0 +1,242 @@
+name: CI Check
+
+# please update docker, toolchain toml and github action with toolchain at same time
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+      - develop
+      - releases
+  
+  workflow_dispatch:
+
+env:
+  DOCKER_USER_OPTION: '$UID:$GID'
+
+jobs:
+  substrate-check:
+    name: Check Benchmarks
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - sre
+    concurrency:
+      group: check-${{ github.ref }}
+      cancel-in-progress: true
+    container:
+      image: composablefi/ci-linux:production
+    steps:
+      - name: Clean up
+        continue-on-error: true
+        run: |
+          sudo chown -R $USER:$USER $GITHUB_WORKSPACE
+          docker system prune --force --all --volumes
+      - uses: actions/checkout@v2
+      - name: Rustup show
+        run: |
+          rustup show
+      - uses: actions/checkout@v2
+      - name: cargo check --all --benches
+        run: |
+          SKIP_WASM_BUILD=1 cargo +nightly check --benches --all # checks all rust crates with default-features, tests, benchmarks
+
+
+  substrate-test-coverage:
+    name: Unit Tests (With Coverage)
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - sre
+    concurrency:
+      group: testcov-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Clean up
+        continue-on-error: true
+        run: |
+          sudo chown -R $USER:$USER $GITHUB_WORKSPACE
+          docker system prune --force --all --volumes
+      - uses: actions/checkout@v2
+      - name: Rustup show
+        run: |
+          /home/runner/.cargo/bin/rustup show
+      - name: Run Test (with coverage)
+        run: |
+          /home/runner/.cargo/bin/cargo +nightly-2021-11-08 install -f cargo-llvm-cov
+          /home/runner/.cargo/bin/rustup component add llvm-tools-preview --toolchain=nightly-2021-11-08
+          SKIP_WASM_BUILD=1 /home/runner/.cargo/bin/cargo +nightly-2021-11-08 llvm-cov --workspace --locked --release --verbose --features=runtime-benchmarks --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
+  
+  substrate-runtime-benchmark:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - sre
+    concurrency:
+      group: benchmarking-runtime-compat-${{ matrix.runtime }}-${{ github.ref }}
+      cancel-in-progress: true
+    container:
+      image: composablefi/ci-linux:production
+    strategy:
+      matrix:
+        runtime: ["dali-dev", "picasso-dev", "composable-dev"]
+    name: Benchmarking / ${{ matrix.runtime }}
+    steps:
+      - name: Clean up
+        continue-on-error: true
+        run: |
+          sudo chown -R $USER:$USER $GITHUB_WORKSPACE
+          docker system prune --force --all --volumes
+      - uses: actions/checkout@v2
+
+      - name: Get branch name
+        id: branch-name
+        uses: tj-actions/branch-names@v5.1
+
+      # FIXME: actually broken: https://github.com/ComposableFi/composable/runs/5570301249?check_suite_focus=true
+      # - name: Check for runtime changes
+      #   env:
+      #     BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+      #     GITHUB_BRANCH_NAME: ${{ steps.branch-name.outputs.current_branch }}
+      #   id: check_runtime
+      #   run: .maintain/check_runtime.sh
+
+      - name: Run single pass benchmarking
+        # only run this step if there are runtime changes
+        # if: env.RUNTIME_CHECK == 1
+        env:
+          RUST_BACKTRACE: full
+        run: |
+          cargo build --release -p composable --features=runtime-benchmarks
+          ./target/release/composable benchmark \
+            --chain="${{ matrix.runtime }}" \
+            --execution=wasm \
+            --wasm-execution=compiled \
+            --pallet="*" \
+            --extrinsic='*' \
+            --steps=1 \
+            --repeat=1 \
+            --log error
+
+
+  substrate-tests:
+    name: Unit Tests 
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - sre
+    concurrency:
+      group: tests-${{ github.ref }}
+      cancel-in-progress: true
+    container:
+      image: composablefi/ci-linux:production
+    steps:
+      - name: Clean up
+        continue-on-error: true
+        run: |
+          sudo chown -R $USER:$USER $GITHUB_WORKSPACE
+          docker system prune --force --all --volumes
+      - uses: actions/checkout@v2
+      - name: Rustup show
+        run: |
+         rustup show
+      - uses: actions/checkout@v2
+      - name: Run Test
+        run: |
+          SKIP_WASM_BUILD=1 cargo test --workspace --locked --release --verbose --features=runtime-benchmarks
+
+
+  linters:
+    name: Linters
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - sre
+    concurrency:
+      group: lint-${{ github.ref }}
+      cancel-in-progress: true
+    container:
+      image: composablefi/ci-linux:production
+    steps:
+      - uses: actions/checkout@v2
+      - name: Rustup show
+        run: |
+          rustup show
+      - name: Use Node.js 14.x
+        uses: actions/setup-node@v2
+        with:
+          node-version: 14.x
+
+      - name: Cargo format (Rust)
+        run: |
+          cargo +nightly fmt --all -- --check
+
+      - name: Taplo format (Toml)
+        run: |
+          taplo lint --warn-as-error
+          taplo fmt --warn-as-error
+          if ! git diff-index HEAD; then
+            exit 1
+          else
+            echo "Everything is fine!"
+          fi
+      
+      - name: Hadolint
+        continue-on-error: true # this step is such a pita
+        run: |
+          hadolint --version
+          total_exit_code=0
+          while IFS= read -r file; do
+            echo "=== $file ==="
+            hadolint --config .hadolint.yaml $file || total_exit_code=$?
+            echo ""
+          done << (find . -name "Dockerfile")
+          exit $total_exit_code
+
+      - name: Remark
+        continue-on-error: true # this step is such a pita
+        run: |
+          npm install yarn
+          ./node_modules/.bin/yarn add remark-cli \
+            remark-lint-mdash-style \
+            https://github.com/typeable/remark-validate-links#anchors \
+            remark-preset-lint-recommended \
+            remark-lint-no-dead-urls
+
+          total_exit_code=0
+          while IFS= read -r file; do
+              ./node_modules/.bin/remark -f $file || total_exit_code=$?
+          done << (find . -name "*.md" -not -path "*/node_modules/*" -not -path "./.github/*")
+          exit $total_exit_code
+
+      - name: Cargo clippy
+        run: |
+          SKIP_WASM_BUILD=1 env -u RUSTFLAGS cargo +nightly clippy --all-targets --tests -- -D warnings
+
+      - name: Cargo Single Depedency
+        # description: Speed up builds and reduced security check surface
+        run: |
+         cargo +nightly install -f cargo-deny
+         # start from minimal dependency crate
+         cargo +nightly deny --manifest-path ./frame/composable-support/Cargo.toml check Ban
+
+      - name: Cargo udeps
+        run: |
+          cargo udeps --version
+          # Compilation of local-integration-tests crate with --all-features doesn't work
+          SKIP_WASM_BUILD=1 cargo +nightly udeps --workspace --exclude local-integration-tests --all-features
+        continue-on-error: true # Often this turns gives false positives, due to the different ways that Substrate uses features.  
