@@ -38,15 +38,12 @@ pub use pallet::*;
 #[cfg(test)]
 mod common_test_functions;
 #[cfg(test)]
-mod liquidity_bootstrapping_tests;
-#[cfg(test)]
 mod mock;
 #[cfg(test)]
 mod stable_swap_tests;
 #[cfg(test)]
 mod uniswap_tests;
 
-mod liquidity_bootstrapping;
 mod stable_swap;
 mod uniswap;
 
@@ -67,63 +64,42 @@ pub mod pallet {
 		transactional, PalletId, RuntimeDebug,
 	};
 
-	use crate::liquidity_bootstrapping::LiquidityBootstrapping;
-	use composable_support::validation::Validated;
-	use composable_traits::{currency::LocalAssets, dex::LiquidityBootstrappingPoolInfo};
-	use frame_system::{
-		ensure_signed,
-		pallet_prelude::{BlockNumberFor, OriginFor},
-	};
+	use frame_system::{ensure_signed, pallet_prelude::OriginFor};
 	use sp_runtime::{
-		traits::{AccountIdConversion, BlockNumberProvider, Convert, One, Zero},
+		traits::{AccountIdConversion, Convert, One, Zero},
 		Permill,
 	};
 
 	#[derive(RuntimeDebug, Encode, Decode, MaxEncodedLen, Clone, PartialEq, Eq, TypeInfo)]
-	pub enum PoolInitConfiguration<AccountId, AssetId, BlockNumber> {
+	pub enum PoolInitConfiguration<AssetId> {
 		StableSwap {
-			owner: AccountId,
 			pair: CurrencyPair<AssetId>,
 			amplification_coefficient: u16,
 			fee: Permill,
-			owner_fee: Permill,
+			protocol_fee: Permill,
 		},
 		ConstantProduct {
-			owner: AccountId,
 			pair: CurrencyPair<AssetId>,
 			fee: Permill,
 			owner_fee: Permill,
 		},
-		LiquidityBootstrapping(LiquidityBootstrappingPoolInfo<AccountId, AssetId, BlockNumber>),
 	}
 
 	#[derive(RuntimeDebug, Encode, Decode, MaxEncodedLen, Clone, PartialEq, Eq, TypeInfo)]
-	pub enum PoolConfiguration<AccountId, AssetId, BlockNumber> {
+	pub enum PoolConfiguration<AccountId, AssetId> {
 		StableSwap(StableSwapPoolInfo<AccountId, AssetId>),
 		ConstantProduct(ConstantProductPoolInfo<AccountId, AssetId>),
-		LiquidityBootstrapping(LiquidityBootstrappingPoolInfo<AccountId, AssetId, BlockNumber>),
 	}
 
-	pub(crate) type AssetIdOf<T> = <T as Config>::AssetId;
-	pub(crate) type BalanceOf<T> = <T as Config>::Balance;
-	pub(crate) type AccountIdOf<T> = <T as frame_system::Config>::AccountId;
-	pub(crate) type LiquidityBootstrappingPoolInfoOf<T> = LiquidityBootstrappingPoolInfo<
-		<T as frame_system::Config>::AccountId,
-		<T as Config>::AssetId,
-		<T as frame_system::Config>::BlockNumber,
-	>;
+	type AssetIdOf<T> = <T as Config>::AssetId;
+	type BalanceOf<T> = <T as Config>::Balance;
+	type AccountIdOf<T> = <T as frame_system::Config>::AccountId;
 	type PoolIdOf<T> = <T as Config>::PoolId;
-	type PoolConfigurationOf<T> = PoolConfiguration<
-		<T as frame_system::Config>::AccountId,
-		<T as Config>::AssetId,
-		<T as frame_system::Config>::BlockNumber,
-	>;
-	type PoolInitConfigurationOf<T> = PoolInitConfiguration<
-		<T as frame_system::Config>::AccountId,
-		<T as Config>::AssetId,
-		<T as frame_system::Config>::BlockNumber,
-	>;
+	type PoolConfigurationOf<T> =
+		PoolConfiguration<<T as frame_system::Config>::AccountId, <T as Config>::AssetId>;
+	type PoolInitConfigurationOf<T> = PoolInitConfiguration<<T as Config>::AssetId>;
 
+	// TODO refactor event publishing with cu-23v2y3n
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
@@ -202,6 +178,8 @@ pub mod pallet {
 		InvalidPair,
 		InvalidFees,
 		AmpFactorMustBeGreaterThanZero,
+
+		// ConstantProduct Specific: Possibly rename
 		MissingAmount,
 	}
 
@@ -262,28 +240,6 @@ pub mod pallet {
 
 		#[pallet::constant]
 		type PalletId: Get<PalletId>;
-
-		// Used for spot price calculation for LBP
-		type LocalAssets: LocalAssets<AssetIdOf<Self>>;
-
-		/// Minimum duration for a sale.
-		#[pallet::constant]
-		type LbpMinSaleDuration: Get<BlockNumberFor<Self>>;
-
-		/// Maximum duration for a sale.
-		#[pallet::constant]
-		type LbpMaxSaleDuration: Get<BlockNumberFor<Self>>;
-
-		/// Maximum initial weight.
-		#[pallet::constant]
-		type LbpMaxInitialWeight: Get<Permill>;
-
-		/// Minimum final weight.
-		#[pallet::constant]
-		type LbpMinFinalWeight: Get<Permill>;
-
-		/// Required origin for pool creation.
-		type PoolCreationOrigin: EnsureOrigin<Self::Origin>;
 	}
 
 	#[pallet::pallet]
@@ -312,8 +268,8 @@ pub mod pallet {
 		// TODO: enable weight
 		#[pallet::weight(10_000)]
 		pub fn create(origin: OriginFor<T>, pool: PoolInitConfigurationOf<T>) -> DispatchResult {
-			T::PoolCreationOrigin::ensure_origin(origin)?;
-			let _ = Self::do_create_pool(pool)?;
+			let who = ensure_signed(origin)?;
+			let _ = Self::do_create_pool(&who, pool)?;
 			Ok(())
 		}
 
@@ -425,37 +381,33 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		#[transactional]
 		pub(crate) fn do_create_pool(
+			who: &T::AccountId,
 			init_config: PoolInitConfigurationOf<T>,
 		) -> Result<T::PoolId, DispatchError> {
-			let (owner, pool_id) = match init_config {
+			match init_config {
 				PoolInitConfiguration::StableSwap {
-					owner,
 					pair,
 					amplification_coefficient,
 					fee,
-					owner_fee,
-				} => (
-					owner.clone(),
-					StableSwap::<T>::do_create_pool(
-						&owner,
+					protocol_fee,
+				} => {
+					let pool_id = StableSwap::<T>::do_create_pool(
+						&who,
 						pair,
 						amplification_coefficient,
 						fee,
-						owner_fee,
-					)?,
-				),
-				PoolInitConfiguration::ConstantProduct { owner, pair, fee, owner_fee } =>
-					(owner.clone(), Uniswap::<T>::do_create_pool(&owner, pair, fee, owner_fee)?),
-				PoolInitConfiguration::LiquidityBootstrapping(pool_config) => {
-					let validated_pool_config = Validated::new(pool_config.clone())?;
-					(
-						pool_config.owner,
-						LiquidityBootstrapping::<T>::do_create_pool(validated_pool_config)?,
-					)
+						protocol_fee,
+					)?;
+					Self::deposit_event(Event::PoolCreated { owner: who.clone(), pool_id });
+
+					Ok(pool_id)
 				},
-			};
-			Self::deposit_event(Event::<T>::PoolCreated { owner, pool_id });
-			Ok(pool_id)
+				PoolInitConfiguration::ConstantProduct { pair, fee, owner_fee } => {
+					let pool_id = Uniswap::<T>::do_create_pool(&who, pair, fee, owner_fee)?;
+					Self::deposit_event(Event::PoolCreated { owner: who.clone(), pool_id });
+					Ok(pool_id)
+				},
+			}
 		}
 
 		pub(crate) fn get_pool(
@@ -487,8 +439,6 @@ pub mod pallet {
 				PoolConfiguration::StableSwap(stable_swap_pool_info) =>
 					Ok(stable_swap_pool_info.pair),
 				ConstantProduct(constant_product_pool_info) => Ok(constant_product_pool_info.pair),
-				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) =>
-					Ok(liquidity_bootstrapping_pool_info.pair),
 			}
 		}
 
@@ -513,13 +463,6 @@ pub mod pallet {
 					asset_id,
 					amount,
 				),
-				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) =>
-					LiquidityBootstrapping::<T>::get_exchange_value(
-						liquidity_bootstrapping_pool_info,
-						pool_account,
-						asset_id,
-						amount,
-					),
 			}
 		}
 
@@ -534,9 +477,9 @@ pub mod pallet {
 		) -> Result<(), DispatchError> {
 			let pool = Self::get_pool(pool_id)?;
 			let pool_account = Self::account_id(&pool_id);
-			let minted_lp = match pool {
-				PoolConfiguration::StableSwap(stable_swap_pool_info) =>
-					StableSwap::<T>::add_liquidity(
+			match pool {
+				PoolConfiguration::StableSwap(stable_swap_pool_info) => {
+					let mint_amount = StableSwap::<T>::add_liquidity(
 						who,
 						stable_swap_pool_info,
 						pool_account,
@@ -544,34 +487,35 @@ pub mod pallet {
 						quote_amount,
 						min_mint_amount,
 						keep_alive,
-					)?,
-				ConstantProduct(constant_product_pool_info) => Uniswap::<T>::add_liquidity(
-					who,
-					constant_product_pool_info,
-					pool_account,
-					base_amount,
-					quote_amount,
-					min_mint_amount,
-					keep_alive,
-				)?,
-				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) =>
-					LiquidityBootstrapping::<T>::add_liquidity(
+					)?;
+					Self::deposit_event(Event::<T>::LiquidityAdded {
+						who: who.clone(),
+						pool_id,
+						base_amount,
+						quote_amount,
+						minted_lp: mint_amount,
+					});
+				},
+				ConstantProduct(constant_product_pool_info) => {
+					let mint_amount = Uniswap::<T>::add_liquidity(
 						who,
-						liquidity_bootstrapping_pool_info,
+						constant_product_pool_info,
 						pool_account,
 						base_amount,
 						quote_amount,
 						min_mint_amount,
 						keep_alive,
-					)?,
-			};
-			Self::deposit_event(Event::<T>::LiquidityAdded {
-				who: who.clone(),
-				pool_id,
-				base_amount,
-				quote_amount,
-				minted_lp,
-			});
+					)?;
+					Self::deposit_event(Event::<T>::LiquidityAdded {
+						who: who.clone(),
+						pool_id,
+						base_amount,
+						quote_amount,
+						minted_lp: mint_amount,
+					});
+				},
+			}
+			// TODO refactor event publishing with cu-23v2y3n
 			Ok(())
 		}
 
@@ -621,20 +565,8 @@ pub mod pallet {
 						total_issuance: updated_lp,
 					});
 				},
-				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) => {
-					let (base_amount, quote_amount) =
-						LiquidityBootstrapping::<T>::remove_liquidity(
-							who,
-							pool_id,
-							liquidity_bootstrapping_pool_info,
-							pool_account,
-							lp_amount,
-							min_base_amount,
-							min_quote_amount,
-						)?;
-					Self::deposit_event(Event::PoolDeleted { pool_id, base_amount, quote_amount });
-				},
 			}
+			// TODO refactor event publishing with cu-23v2y3n
 			Ok(())
 		}
 
@@ -649,13 +581,12 @@ pub mod pallet {
 		) -> Result<Self::Balance, DispatchError> {
 			let pool = Self::get_pool(pool_id)?;
 			let pool_account = Self::account_id(&pool_id);
-			let (base_amount, fees) = match pool {
+			match pool {
 				PoolConfiguration::StableSwap(pool) => {
 					// /!\ NOTE(hussein-aitlahcen): after this check, do not use pool.pair as the
 					// provided pair might have been swapped
 					ensure!(pair == pool.pair, Error::<T>::PairMismatch);
-					// NOTE: lp_fees includes owner_fees.
-					let (base_amount_excluding_fees, quote_amount, lp_fees, owner_fees) =
+					let (base_amount_excluding_fees, quote_amount, lp_fees, protocol_fees) =
 						StableSwap::<T>::do_compute_swap(&pool, &pool_account, quote_amount, true)?;
 
 					ensure!(
@@ -665,7 +596,13 @@ pub mod pallet {
 					T::Assets::transfer(pair.quote, who, &pool_account, quote_amount, keep_alive)?;
 
 					// NOTE(hussein-aitlance): no need to keep alive the pool account
-					T::Assets::transfer(pair.base, &pool_account, &pool.owner, owner_fees, false)?;
+					T::Assets::transfer(
+						pair.base,
+						&pool_account,
+						&pool.owner,
+						protocol_fees,
+						false,
+					)?;
 					T::Assets::transfer(
 						pair.base,
 						&pool_account,
@@ -673,11 +610,20 @@ pub mod pallet {
 						base_amount_excluding_fees,
 						false,
 					)?;
-					(base_amount_excluding_fees, lp_fees)
+					Self::deposit_event(Event::<T>::Swapped {
+						pool_id,
+						who: who.clone(),
+						base_asset: pair.base,
+						quote_asset: pair.quote,
+						base_amount: base_amount_excluding_fees,
+						quote_amount,
+						fee: lp_fees.safe_add(&protocol_fees)?,
+					});
+
+					Ok(base_amount_excluding_fees)
 				},
 				ConstantProduct(constant_product_pool_info) => {
-					// NOTE: lp_fees includes owner_fees.
-					let (base_amount, quote_amount_excluding_lp_fee, lp_fees, owner_fees) =
+					let (base_amount, quote_amount_excluding_fees, lp_fees, owner_fees) =
 						Uniswap::<T>::do_compute_swap(
 							&constant_product_pool_info,
 							&pool_account,
@@ -685,6 +631,9 @@ pub mod pallet {
 							quote_amount,
 							true,
 						)?;
+					let total_fees = lp_fees.safe_add(&owner_fees)?;
+					let quote_amount_including_fees =
+						quote_amount_excluding_fees.safe_add(&total_fees)?;
 
 					ensure!(base_amount >= min_receive, Error::<T>::CannotRespectMinimumRequested);
 
@@ -692,49 +641,34 @@ pub mod pallet {
 						pair.quote,
 						who,
 						&pool_account,
-						quote_amount_excluding_lp_fee,
+						quote_amount_including_fees,
 						keep_alive,
 					)?;
 					// NOTE(hussein-aitlance): no need to keep alive the pool account
 					T::Assets::transfer(
 						pair.quote,
-						who,
+						&pool_account,
 						&constant_product_pool_info.owner,
 						owner_fees,
 						false,
 					)?;
 					T::Assets::transfer(pair.base, &pool_account, who, base_amount, false)?;
-					(base_amount, lp_fees)
-				},
-				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) => {
-					let current_block = frame_system::Pallet::<T>::current_block_number();
-					let (fees, base_amount) = LiquidityBootstrapping::<T>::do_get_exchange(
-						liquidity_bootstrapping_pool_info,
-						&pool_account,
-						pair,
-						current_block,
-						quote_amount,
-						true,
-					)?;
 
-					ensure!(base_amount >= min_receive, Error::<T>::CannotRespectMinimumRequested);
+					Self::deposit_event(Event::<T>::Swapped {
+						pool_id,
+						who: who.clone(),
+						base_asset: pair.base,
+						quote_asset: pair.quote,
+						base_amount,
+						quote_amount: quote_amount_excluding_fees,
+						fee: total_fees,
+					});
 
-					T::Assets::transfer(pair.quote, who, &pool_account, quote_amount, keep_alive)?;
-					// NOTE(hussein-aitlance): no need to keep alive the pool account
-					T::Assets::transfer(pair.base, &pool_account, who, base_amount, false)?;
-					(base_amount, fees)
+					Ok(base_amount)
 				},
-			};
-			Self::deposit_event(Event::<T>::Swapped {
-				pool_id,
-				who: who.clone(),
-				base_asset: pair.base,
-				quote_asset: pair.quote,
-				base_amount,
-				quote_amount,
-				fee: fees,
-			});
-			Ok(base_amount)
+			}
+
+			// TODO refactor event publishing with cu-23v2y3n
 		}
 
 		#[transactional]
@@ -767,15 +701,6 @@ pub mod pallet {
 					let quote_amount = Self::get_exchange_value(pool_id, asset_id, amount)?;
 					Self::exchange(who, pool_id, pair, quote_amount, T::Balance::zero(), keep_alive)
 				},
-				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) => {
-					let pair = if asset_id == liquidity_bootstrapping_pool_info.pair.base {
-						liquidity_bootstrapping_pool_info.pair
-					} else {
-						liquidity_bootstrapping_pool_info.pair.swap()
-					};
-					let quote_amount = Self::get_exchange_value(pool_id, asset_id, amount)?;
-					Self::exchange(who, pool_id, pair, quote_amount, T::Balance::zero(), keep_alive)
-				},
 			}
 		}
 
@@ -799,14 +724,6 @@ pub mod pallet {
 						constant_product_pool.pair.swap()
 					} else {
 						constant_product_pool.pair
-					};
-					Self::exchange(who, pool_id, pair, amount, T::Balance::zero(), keep_alive)
-				},
-				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) => {
-					let pair = if asset_id == liquidity_bootstrapping_pool_info.pair.base {
-						liquidity_bootstrapping_pool_info.pair.swap()
-					} else {
-						liquidity_bootstrapping_pool_info.pair
 					};
 					Self::exchange(who, pool_id, pair, amount, T::Balance::zero(), keep_alive)
 				},

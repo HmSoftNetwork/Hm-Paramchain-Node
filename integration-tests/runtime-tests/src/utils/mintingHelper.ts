@@ -1,4 +1,4 @@
-import {sendAndWaitForSuccess} from "@composable/utils/polkadotjs";
+import {sendAndWaitForSuccess, waitForBlocks} from "@composable/utils/polkadotjs";
 import {expect} from "chai";
 
 /***

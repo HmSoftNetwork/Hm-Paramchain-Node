@@ -157,13 +157,13 @@ impl MinimalOracle for PriceConverter {
 }
 
 //  cannot be zero as in benches it fails Invalid input: InsufficientBalance
-fn native_existential_deposit() -> Balance {
+fn native_existential_desposit() -> Balance {
 	100 * CurrencyId::milli::<Balance>()
 }
 
 parameter_types! {
 	/// Existential deposit (ED for short) is minimum amount an account has to hold to stay in state.
-	pub NativeExistentialDeposit: Balance = native_existential_deposit();
+	pub NativeExistentialDeposit: Balance = native_existential_desposit();
 }
 
 #[cfg(feature = "runtime-benchmarks")]
@@ -180,8 +180,11 @@ pub fn multi_existential_deposits(_currency_id: &CurrencyId) -> Balance {
 
 #[cfg(not(feature = "runtime-benchmarks"))]
 pub fn multi_existential_deposits(currency_id: &CurrencyId) -> Balance {
-	PriceConverter::get_price_inverse(*currency_id, NativeExistentialDeposit::get())
-		.unwrap_or(Balance::MAX) // TODO: here DEX call to pemissioned markets should come
+	match *currency_id {
+		CurrencyId::PICA => NativeExistentialDeposit::get(),
+		id => PriceConverter::get_price_inverse(id, NativeExistentialDeposit::get())
+			.unwrap_or(Balance::MAX), // TODO: here DEX call to pemissioned markets should come
+	}
 }
 
 parameter_type_with_key! {
