@@ -92,29 +92,8 @@ declare module '@polkadot/api-base/types/storage' {
     };
     balances: {
       /**
-       * The Balances pallet example of storing the balance of an account.
+       * The balance of an account.
        * 
-       * # Example
-       * 
-       * ```nocompile
-       * impl pallet_balances::Config for Runtime {
-       * type AccountStore = StorageMapShim<Self::Account<Runtime>, frame_system::Provider<Runtime>, AccountId, Self::AccountData<Balance>>
-       * }
-       * ```
-       * 
-       * You can also store the balance of an account in the `System` pallet.
-       * 
-       * # Example
-       * 
-       * ```nocompile
-       * impl pallet_balances::Config for Runtime {
-       * type AccountStore = System
-       * }
-       * ```
-       * 
-       * But this comes with tradeoffs, storing account balances in the system pallet stores
-       * `frame_system` data alongside the account data contrary to storing account balances in the
-       * `Balances` pallet, which uses a `StorageMap` to store balances data only.
        * NOTE: This is only used in the case that this pallet is used to store balances.
        **/
       account: AugmentedQuery<ApiType, (arg: AccountId32 | string | Uint8Array) => Observable<PalletBalancesAccountData>, [AccountId32]> & QueryableStorageEntry<ApiType, [AccountId32]>;
@@ -146,11 +125,11 @@ declare module '@polkadot/api-base/types/storage' {
       /**
        * The counter used to uniquely identify bond offers within this pallet.
        **/
-      bondOfferCount: AugmentedQuery<ApiType, () => Observable<u128>, []> & QueryableStorageEntry<ApiType, []>;
+      bondOfferCount: AugmentedQuery<ApiType, () => Observable<u64>, []> & QueryableStorageEntry<ApiType, []>;
       /**
        * A mapping from offer ID to the pair: (issuer, offer)
        **/
-      bondOffers: AugmentedQuery<ApiType, (arg: u128 | AnyNumber | Uint8Array) => Observable<Option<ITuple<[AccountId32, ComposableTraitsBondedFinanceBondOffer]>>>, [u128]> & QueryableStorageEntry<ApiType, [u128]>;
+      bondOffers: AugmentedQuery<ApiType, (arg: u64 | AnyNumber | Uint8Array) => Observable<Option<ITuple<[AccountId32, ComposableTraitsBondedFinanceBondOffer]>>>, [u64]> & QueryableStorageEntry<ApiType, [u64]>;
       /**
        * Generic query
        **/
@@ -309,6 +288,13 @@ declare module '@polkadot/api-base/types/storage' {
        * proposal.
        **/
       lastTabledWasExternal: AugmentedQuery<ApiType, () => Observable<bool>, []> & QueryableStorageEntry<ApiType, []>;
+      /**
+       * Accounts for which there are locks in action which may be removed at some point in the
+       * future. The value is the block number at which the lock expires and may be removed.
+       * 
+       * TWOX-NOTE: OK ― `AccountId` is a secure hash.
+       **/
+      locks: AugmentedQuery<ApiType, (arg: AccountId32 | string | Uint8Array) => Observable<Option<u32>>, [AccountId32]> & QueryableStorageEntry<ApiType, [AccountId32]>;
       /**
        * The lowest referendum index representing an unbaked referendum. Equal to
        * `ReferendumCount` if there isn't a unbaked referendum.
@@ -1065,10 +1051,6 @@ declare module '@polkadot/api-base/types/storage' {
        * The configuration which controls the dynamics of the outbound queue.
        **/
       queueConfig: AugmentedQuery<ApiType, () => Observable<CumulusPalletXcmpQueueQueueConfigData>, []> & QueryableStorageEntry<ApiType, []>;
-      /**
-       * Whether or not the XCMP queue is suspended from executing incoming XCMs or not.
-       **/
-      queueSuspended: AugmentedQuery<ApiType, () => Observable<bool>, []> & QueryableStorageEntry<ApiType, []>;
       /**
        * Any signal messages waiting to be sent.
        **/

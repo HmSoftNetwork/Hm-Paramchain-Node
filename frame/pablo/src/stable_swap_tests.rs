@@ -1,7 +1,7 @@
-#[cfg(test)]
+#![allow(unreachable_patterns)] // TODO: remove this when there are more pool configurations added.
+
 use crate::{
 	common_test_functions::*,
-	mock,
 	mock::{Pablo, *},
 	PoolConfiguration::StableSwap,
 	PoolInitConfiguration,
@@ -16,7 +16,7 @@ use frame_support::{
 	traits::fungibles::{Inspect, Mutate},
 };
 use proptest::prelude::*;
-use sp_runtime::Permill;
+use sp_runtime::{Permill, TokenError};
 
 fn create_stable_swap_pool(
 	base_asset: AssetId,
@@ -25,21 +25,15 @@ fn create_stable_swap_pool(
 	quote_amount: Balance,
 	amplification_factor: u16,
 	lp_fee: Permill,
-	owner_fee: Permill,
+	protocol_fee: Permill,
 ) -> PoolId {
 	let pool_init_config = PoolInitConfiguration::StableSwap {
-		owner: ALICE,
 		pair: CurrencyPair::new(base_asset, quote_asset),
 		amplification_coefficient: amplification_factor,
 		fee: lp_fee,
-		owner_fee,
+		protocol_fee,
 	};
-	System::set_block_number(1);
-	let actual_pool_id = Pablo::do_create_pool(pool_init_config).expect("pool creation failed");
-	assert_has_event::<Test, _>(
-		|e| matches!(e.event, mock::Event::Pablo(crate::Event::PoolCreated { pool_id, .. }) if pool_id == actual_pool_id),
-	);
-
+	let pool_id = Pablo::do_create_pool(&ALICE, pool_init_config).expect("pool creation failed");
 	// Mint the tokens
 	assert_ok!(Tokens::mint_into(base_asset, &ALICE, base_amount));
 	assert_ok!(Tokens::mint_into(quote_asset, &ALICE, quote_amount));
@@ -47,32 +41,26 @@ fn create_stable_swap_pool(
 	// Add the liquidity
 	assert_ok!(Pablo::add_liquidity(
 		Origin::signed(ALICE),
-		actual_pool_id,
+		pool_id,
 		base_amount,
 		quote_amount,
 		0,
 		false
 	));
-	assert_last_event::<Test, _>(|e| {
-		matches!(e.event,
-            mock::Event::Pablo(crate::Event::LiquidityAdded { who, pool_id, .. })
-            if who == ALICE && pool_id == actual_pool_id)
-	});
-	actual_pool_id
+	pool_id
 }
 
 #[test]
 fn test_amp_zero_pool_creation_failure() {
 	new_test_ext().execute_with(|| {
 		let pool_init_config = PoolInitConfiguration::StableSwap {
-			owner: ALICE,
 			pair: CurrencyPair::new(USDC, USDT),
 			amplification_coefficient: 0_u16,
 			fee: Permill::zero(),
-			owner_fee: Permill::zero(),
+			protocol_fee: Permill::zero(),
 		};
 		assert_noop!(
-			Pablo::do_create_pool(pool_init_config),
+			Pablo::do_create_pool(&ALICE, pool_init_config),
 			crate::Error::<Test>::AmpFactorMustBeGreaterThanZero
 		);
 	});
@@ -82,13 +70,13 @@ fn test_amp_zero_pool_creation_failure() {
 fn test_dex_demo() {
 	new_test_ext().execute_with(|| {
 		let pool_init_config = PoolInitConfiguration::StableSwap {
-			owner: ALICE,
 			pair: CurrencyPair::new(USDC, USDT),
 			amplification_coefficient: 100_u16,
 			fee: Permill::zero(),
-			owner_fee: Permill::zero(),
+			protocol_fee: Permill::zero(),
 		};
-		let pool_id = Pablo::do_create_pool(pool_init_config).expect("pool creation failed");
+		let pool_id =
+			Pablo::do_create_pool(&ALICE, pool_init_config).expect("pool creation failed");
 		let pool = Pablo::pools(pool_id).expect("pool not found");
 		let pool = match pool {
 			StableSwap(pool) => pool,
@@ -161,11 +149,10 @@ fn test_dex_demo() {
 fn add_remove_lp() {
 	new_test_ext().execute_with(|| {
 		let pool_init_config = PoolInitConfiguration::StableSwap {
-			owner: ALICE,
 			pair: CurrencyPair::new(USDC, USDT),
 			amplification_coefficient: 10_u16,
 			fee: Permill::zero(),
-			owner_fee: Permill::zero(),
+			protocol_fee: Permill::zero(),
 		};
 		let unit = 1_000_000_000_000_u128;
 		let initial_usdt = 1_000_000_000_000_u128 * unit;
@@ -261,33 +248,101 @@ fn add_lp_imbalanced() {
 
 // test add liquidity with min_mint_amount
 #[test]
-fn add_lp_with_min_mint_amount() {
+fn add_lp_with_min_mint_amount_success() {
 	new_test_ext().execute_with(|| {
-		let pool_init_config = PoolInitConfiguration::StableSwap {
-			owner: ALICE,
-			pair: CurrencyPair::new(USDC, USDT),
-			amplification_coefficient: 10_u16,
-			fee: Permill::zero(),
-			owner_fee: Permill::zero(),
-		};
 		let unit = 1_000_000_000_000_u128;
 		let initial_usdt = 1_000_000_000_000_u128 * unit;
 		let initial_usdc = 1_000_000_000_000_u128 * unit;
-		let expected_lp = |base_amount: Balance,
-		                   quote_amount: Balance,
-		                   _lp_total_issuance: Balance,
-		                   _pool_base_amount: Balance,
-		                   _pool_quote_amount: Balance|
-		 -> Balance { base_amount + quote_amount };
-		let usdc_amount = 1000 * unit;
-		let usdt_amount = 1000 * unit;
-		common_add_lp_with_min_mint_amount(
-			pool_init_config,
+		let pool_id = create_stable_swap_pool(
+			USDC,
+			USDT,
 			initial_usdc,
 			initial_usdt,
-			usdc_amount,
-			usdt_amount,
-			expected_lp,
+			100_u16,
+			Permill::zero(),
+			Permill::zero(),
+		);
+		let pool = Pablo::pools(pool_id).expect("pool not found");
+		let pool = match pool {
+			StableSwap(pool) => pool,
+			_ => panic!("expected stable_swap pool"),
+		};
+		let bob_usdc = 1000 * unit;
+		let bob_usdt = 1000 * unit;
+		// Mint the tokens
+		assert_ok!(Tokens::mint_into(USDC, &BOB, bob_usdc));
+		assert_ok!(Tokens::mint_into(USDT, &BOB, bob_usdt));
+
+		let lp = Tokens::balance(pool.lp_token, &BOB);
+		assert_eq!(lp, 0_u128);
+		let expected_min_value = bob_usdt + bob_usdc;
+		// Add the liquidity in balanced way
+		assert_ok!(Pablo::add_liquidity(
+			Origin::signed(BOB),
+			pool_id,
+			bob_usdc,
+			bob_usdt,
+			expected_min_value,
+			false
+		));
+		let lp = Tokens::balance(pool.lp_token, &BOB);
+		// must have received some lp tokens
+		assert!(lp == bob_usdc + bob_usdt);
+
+		let bob_usdc = 1000 * unit;
+		let bob_usdt = 900 * unit;
+		// Mint the tokens
+		assert_ok!(Tokens::mint_into(USDC, &BOB, bob_usdc));
+		assert_ok!(Tokens::mint_into(USDT, &BOB, bob_usdt));
+		// Add the liquidity in imbalanced way, but have expected_min_value higher
+		assert_noop!(
+			Pablo::add_liquidity(
+				Origin::signed(BOB),
+				pool_id,
+				bob_usdc,
+				bob_usdt,
+				expected_min_value,
+				false
+			),
+			crate::Error::<Test>::CannotRespectMinimumRequested
+		);
+	});
+}
+
+// test add liquidity with min_mint_amount
+#[test]
+fn add_lp_with_min_mint_amount_fail() {
+	new_test_ext().execute_with(|| {
+		let unit = 1_000_000_000_000_u128;
+		let initial_usdt = 1_000_000_000_000_u128 * unit;
+		let initial_usdc = 1_000_000_000_000_u128 * unit;
+		let pool_id = create_stable_swap_pool(
+			USDC,
+			USDT,
+			initial_usdc,
+			initial_usdt,
+			100_u16,
+			Permill::zero(),
+			Permill::zero(),
+		);
+
+		let bob_usdc = 1000 * unit;
+		let bob_usdt = 900 * unit;
+		// Mint the tokens
+		assert_ok!(Tokens::mint_into(USDC, &BOB, bob_usdc));
+		assert_ok!(Tokens::mint_into(USDT, &BOB, bob_usdt));
+		let expected_min_value = bob_usdt + bob_usdc + 1_u128;
+		// Add the liquidity in imbalanced way, but have expected_min_value higher
+		assert_noop!(
+			Pablo::add_liquidity(
+				Origin::signed(BOB),
+				pool_id,
+				bob_usdc,
+				bob_usdt,
+				expected_min_value,
+				false
+			),
+			crate::Error::<Test>::CannotRespectMinimumRequested
 		);
 	});
 }
@@ -300,16 +355,52 @@ fn remove_lp_failure() {
 		let unit = 1_000_000_000_000_u128;
 		let initial_usdt = 1_000_000_000_000_u128 * unit;
 		let initial_usdc = 1_000_000_000_000_u128 * unit;
-		let pool_init_config = PoolInitConfiguration::StableSwap {
-			owner: ALICE,
-			pair: CurrencyPair::new(USDC, USDT),
-			amplification_coefficient: 10_u16,
-			fee: Permill::zero(),
-			owner_fee: Permill::zero(),
+		let pool_id = create_stable_swap_pool(
+			USDC,
+			USDT,
+			initial_usdc,
+			initial_usdt,
+			100_u16,
+			Permill::zero(),
+			Permill::zero(),
+		);
+		let pool = Pablo::pools(pool_id).expect("pool not found");
+		let pool = match pool {
+			StableSwap(pool) => pool,
+			_ => panic!("expected stable_swap pool"),
 		};
 		let bob_usdc = 1000 * unit;
 		let bob_usdt = 1000 * unit;
-		common_remove_lp_failure(pool_init_config, initial_usdc, initial_usdt, bob_usdc, bob_usdt);
+		// Mint the tokens
+		assert_ok!(Tokens::mint_into(USDC, &BOB, bob_usdc));
+		assert_ok!(Tokens::mint_into(USDT, &BOB, bob_usdt));
+
+		// Add the liquidity
+		assert_ok!(Pablo::add_liquidity(
+			Origin::signed(BOB),
+			pool_id,
+			bob_usdc,
+			bob_usdt,
+			0,
+			false
+		));
+		let lp = Tokens::balance(pool.lp_token, &BOB);
+		assert_noop!(
+			Pablo::remove_liquidity(Origin::signed(BOB), pool_id, lp + 1, 0, 0),
+			TokenError::NoFunds
+		);
+		let min_expected_usdt = 1001 * unit;
+		let min_expected_usdc = 1001 * unit;
+		assert_noop!(
+			Pablo::remove_liquidity(
+				Origin::signed(BOB),
+				pool_id,
+				lp,
+				min_expected_usdc,
+				min_expected_usdt
+			),
+			crate::Error::<Test>::CannotRespectMinimumRequested
+		);
 	});
 }
 
@@ -321,22 +412,51 @@ fn exchange_failure() {
 		let unit = 1_000_000_000_000_u128;
 		let initial_usdt = 1_000_000_u128 * unit;
 		let initial_usdc = 1_000_000_u128 * unit;
-		let exchange_base_amount = 1000 * unit;
-		let pool_init_config = PoolInitConfiguration::StableSwap {
-			owner: ALICE,
-			pair: CurrencyPair::new(USDC, USDT),
-			amplification_coefficient: 10_u16,
-			fee: Permill::zero(),
-			owner_fee: Permill::zero(),
-		};
-		common_exchange_failure(pool_init_config, initial_usdc, initial_usdt, exchange_base_amount);
+		let pool_id = create_stable_swap_pool(
+			USDC,
+			USDT,
+			initial_usdc,
+			initial_usdt,
+			100_u16,
+			Permill::zero(),
+			Permill::zero(),
+		);
+		let bob_usdc = 1000 * unit;
+		// Mint the tokens
+		assert_ok!(Tokens::mint_into(USDC, &BOB, bob_usdc));
+
+		let exchange_usdc = 1001 * unit;
+		assert_noop!(
+			Pablo::swap(
+				Origin::signed(BOB),
+				pool_id,
+				CurrencyPair::new(USDT, USDC),
+				exchange_usdc,
+				0,
+				false
+			),
+			orml_tokens::Error::<Test>::BalanceTooLow
+		);
+		let exchange_value = 1000 * unit;
+		let expected_value = 1001 * unit;
+		assert_noop!(
+			Pablo::swap(
+				Origin::signed(BOB),
+				pool_id,
+				CurrencyPair::new(USDT, USDC),
+				exchange_value,
+				expected_value,
+				false
+			),
+			crate::Error::<Test>::CannotRespectMinimumRequested
+		);
 	});
 }
 
 //
-// - test lp_fees and owner_fee
+// - test lp fees
 #[test]
-fn fees() {
+fn lp_fee() {
 	new_test_ext().execute_with(|| {
 		let precision = 100;
 		let epsilon = 1;
@@ -344,7 +464,6 @@ fn fees() {
 		let initial_usdt = 1_000_000_000_000_u128 * unit;
 		let initial_usdc = 1_000_000_000_000_u128 * unit;
 		let lp_fee = Permill::from_float(0.05);
-		let owner_fee = Permill::from_float(0.01); // 10% of lp fees goes to pool owner
 		let pool_id = create_stable_swap_pool(
 			USDC,
 			USDT,
@@ -352,7 +471,44 @@ fn fees() {
 			initial_usdt,
 			100_u16,
 			lp_fee,
-			owner_fee,
+			Permill::zero(),
+		);
+		let bob_usdt = 1000 * unit;
+		// Mint the tokens
+		assert_ok!(Tokens::mint_into(USDT, &BOB, bob_usdt));
+
+		assert_ok!(Pablo::sell(Origin::signed(BOB), pool_id, USDT, bob_usdt, false));
+		let usdc_balance = Tokens::balance(USDC, &BOB);
+		// received usdc should bob_usdt - lp_fee
+		assert_ok!(acceptable_computation_error(
+			usdc_balance,
+			bob_usdt - lp_fee.mul_ceil(bob_usdt),
+			precision,
+			epsilon
+		));
+	});
+}
+
+//
+// - test protocol fees
+#[test]
+fn protocol_fee() {
+	new_test_ext().execute_with(|| {
+		let precision = 100;
+		let epsilon = 1;
+		let unit = 1_000_000_000_000_u128;
+		let initial_usdt = 1_000_000_000_000_u128 * unit;
+		let initial_usdc = 1_000_000_000_000_u128 * unit;
+		let lp_fee = Permill::from_float(0.05);
+		let protocol_fee = Permill::from_float(0.01); // 10% of lp fees goes to pool owner
+		let pool_id = create_stable_swap_pool(
+			USDC,
+			USDT,
+			initial_usdc,
+			initial_usdt,
+			100_u16,
+			lp_fee,
+			protocol_fee,
 		);
 		let bob_usdt = 1000 * unit;
 		// Mint the tokens
@@ -366,11 +522,11 @@ fn fees() {
 			precision,
 			epsilon
 		));
-		// from lp_fee 1 % (as per owner_fee) goes to pool owner (ALICE)
+		// from lp_fee 1 % (as per protocol_fee) goes to pool owner (ALICE)
 		let alice_usdc_bal = Tokens::balance(USDC, &ALICE);
 		assert_ok!(acceptable_computation_error(
 			alice_usdc_bal,
-			owner_fee.mul_floor(lp_fee.mul_floor(bob_usdt)),
+			protocol_fee.mul_floor(lp_fee.mul_floor(bob_usdt)),
 			precision,
 			epsilon
 		));

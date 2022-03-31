@@ -6,7 +6,13 @@ import type { ITuple } from '@polkadot/types-codec/types';
 import type { EthereumAccountId } from '@polkadot/types/interfaces/eth';
 import type { EcdsaSignature, MultiSignature } from '@polkadot/types/interfaces/extrinsics';
 import type { ParachainInherentData, PersistedValidationData } from '@polkadot/types/interfaces/parachains';
-import type { AccountId32, Balance, Permill } from '@polkadot/types/interfaces/runtime';
+import type { AccountId32, Permill } from '@polkadot/types/interfaces/runtime';
+
+/** @name Balance */
+export interface Balance extends u128 {}
+
+/** @name CommonMosaicRemoteAssetId */
+export interface CommonMosaicRemoteAssetId extends Null {}
 
 /** @name CommonMosaicRemoteAssetId */
 export interface CommonMosaicRemoteAssetId extends Null {}
@@ -157,15 +163,12 @@ export interface PalletAssetsRegistryForeignMetadata extends Null {}
 /** @name PalletCollatorSelectionCandidateInfo */
 export interface PalletCollatorSelectionCandidateInfo extends Null {}
 
-/** @name PalletCrowdloanRewardsModelsEcdsaSignature */
-export interface PalletCrowdloanRewardsModelsEcdsaSignature extends EcdsaSignature {}
-
 /** @name PalletCrowdloanRewardsModelsProof */
 export interface PalletCrowdloanRewardsModelsProof extends Enum {
   readonly isRelayChain: boolean;
   readonly asRelayChain: ITuple<[AccountId32, MultiSignature]>;
   readonly isEthereum: boolean;
-  readonly asEthereum: PalletCrowdloanRewardsModelsEcdsaSignature;
+  readonly asEthereum: EcdsaSignature;
   readonly type: 'RelayChain' | 'Ethereum';
 }
 
@@ -297,6 +300,9 @@ export interface PolkadotPrimitivesV1AbridgedHostConfiguration extends Null {}
 
 /** @name PolkadotPrimitivesV1PersistedValidationData */
 export interface PolkadotPrimitivesV1PersistedValidationData extends PersistedValidationData {}
+
+/** @name PoolId */
+export interface PoolId extends u128 {}
 
 /** @name SpConsensusAuraSr25519AppSr25519Public */
 export interface SpConsensusAuraSr25519AppSr25519Public extends Null {}
