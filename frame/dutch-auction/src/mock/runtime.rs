@@ -1,7 +1,6 @@
 use crate::{
 	self as pallet_dutch_auction,
 	mock::currency::{CurrencyId, NativeAssetId},
-	weights::SubstrateWeight,
 };
 
 use composable_traits::defi::DeFiComposableConfig;
@@ -85,7 +84,7 @@ impl frame_system::Config for Runtime {
 }
 
 parameter_types! {
-	pub const NativeExistentialDeposit: Balance = 1_000_000_000;
+	pub const NativeExistentialDeposit: Balance = 0;
 }
 
 impl pallet_balances::Config for Runtime {
@@ -170,13 +169,31 @@ impl DeFiComposableConfig for Runtime {
 	type Balance = Balance;
 }
 
+parameter_types! {
+	pub static WeightToFee: Balance = 1;
+}
+
+impl WeightToFeePolynomial for WeightToFee {
+	type Balance = Balance;
+
+	fn polynomial() -> WeightToFeeCoefficients<Self::Balance> {
+		let one = WeightToFeeCoefficient {
+			degree: 1,
+			coeff_frac: Perbill::zero(),
+			coeff_integer: WEIGHT_TO_FEE.with(|v| *v.borrow()),
+			negative: false,
+		};
+		smallvec![one]
+	}
+}
+
 impl pallet_dutch_auction::Config for Runtime {
 	type Event = Event;
 	type UnixTime = Timestamp;
 	type OrderId = OrderId;
 	type MultiCurrency = Assets;
-	type WeightInfo = SubstrateWeight<Self>;
-	type PositionExistentialDeposit = NativeExistentialDeposit;
+	type WeightInfo = ();
+	type WeightToFee = WeightToFee;
 	type PalletId = DutchAuctionPalletId;
 	type NativeCurrency = Balances;
 }
