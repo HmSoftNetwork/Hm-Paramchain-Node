@@ -59,6 +59,7 @@ pub use frame_support::{
 };
 
 use codec::Encode;
+use composable_traits::assets::Asset;
 use frame_support::traits::{fungibles, EqualPrivilegeOnly, OnRuntimeUpgrade};
 use frame_system as system;
 #[cfg(any(feature = "std", test))]
@@ -906,9 +907,13 @@ mod benches {
 }
 
 impl_runtime_apis! {
-	impl assets_runtime_api::AssetsRuntimeApi<Block, CurrencyId, AccountId, Balance> for Runtime {
+	impl assets_runtime_api::AssetsRuntimeApi<Block, CurrencyId, AccountId, Balance, Asset> for Runtime {
 		fn balance_of(asset_id: SafeRpcWrapper<CurrencyId>, account_id: AccountId) -> SafeRpcWrapper<Balance> /* Balance */ {
 			SafeRpcWrapper(<Assets as fungibles::Inspect::<AccountId>>::balance(asset_id.0, &account_id))
+		}
+
+		fn list_assets() -> Vec<Asset> {
+			CurrencyId::list_assets()
 		}
 	}
 
