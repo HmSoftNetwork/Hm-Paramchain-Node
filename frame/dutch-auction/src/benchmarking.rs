@@ -44,7 +44,6 @@ where
 	T: Config,
 	<T as Config>::MultiCurrency:
 		Mutate<T::AccountId, Balance = T::Balance, AssetId = T::MayBeAssetId>,
-	<T as Config>::NativeCurrency: frame_support::traits::tokens::currency::Currency<T::AccountId>,
 {
 	let treasury = &T::PalletId::get().into_account();
 	let native_token_amount = <T as pallet::Config>::NativeCurrency::minimum_balance()
@@ -58,8 +57,6 @@ benchmarks! {
 		where
 		<T as Config>::MultiCurrency:
 				Mutate<T::AccountId, Balance = T::Balance, AssetId = T::MayBeAssetId>,
-				<T as Config>::NativeCurrency : frame_support::traits::tokens::currency::Currency<T::AccountId>,
-
 	}
 	ask {
 		let sell = sell_identity::<T>();

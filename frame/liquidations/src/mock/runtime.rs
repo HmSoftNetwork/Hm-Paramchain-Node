@@ -194,10 +194,10 @@ impl pallet_dutch_auction::Config for Runtime {
 	type UnixTime = Timestamp;
 	type OrderId = OrderId;
 	type MultiCurrency = Assets;
-	type WeightInfo = pallet_dutch_auction::weights::SubstrateWeight<Self>;
+	type WeightInfo = ();
+	type WeightToFee = WeightToFee;
 	type PalletId = DutchAuctionPalletId;
 	type NativeCurrency = Balances;
-	type PositionExistentialDeposit = NativeExistentialDeposit;
 }
 
 parameter_types! {
