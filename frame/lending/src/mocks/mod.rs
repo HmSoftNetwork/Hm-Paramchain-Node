@@ -315,13 +315,13 @@ impl WeightToFeePolynomial for DutchAuctionsMocks {
 
 impl pallet_dutch_auction::Config for Runtime {
 	type Event = Event;
-	type UnixTime = Timestamp;
 	type OrderId = OrderId;
+	type UnixTime = Timestamp;
 	type MultiCurrency = Assets;
-	type WeightInfo = pallet_dutch_auction::weights::SubstrateWeight<Self>;
-	type PositionExistentialDeposit = MinimumDeposit;
+	type WeightInfo = DutchAuctionsMocks;
+	type NativeCurrency = Assets;
 	type PalletId = DutchAuctionPalletId;
-	type NativeCurrency = Balances;
+	type WeightToFee = DutchAuctionsMocks;
 }
 
 impl pallet_liquidations::Config for Runtime {

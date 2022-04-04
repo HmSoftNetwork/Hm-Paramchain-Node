@@ -56,6 +56,7 @@ pub use frame_support::{
 };
 
 use codec::Encode;
+use composable_traits::assets::Asset;
 use frame_support::traits::{EqualPrivilegeOnly, OnRuntimeUpgrade};
 use frame_system as system;
 #[cfg(any(feature = "std", test))]
@@ -100,7 +101,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	// The version of the runtime specification. A full node will not attempt to use its native
 	//   runtime in substitute for the on-chain Wasm runtime unless all of `spec_name`,
 	//   `spec_version`, and `authoring_version` are the same between Wasm and native.
-	spec_version: 100,
+	spec_version: 1000,
 	impl_version: 1,
 	apis: RUNTIME_API_VERSIONS,
 	transaction_version: 1,
@@ -835,9 +836,13 @@ mod benches {
 }
 
 impl_runtime_apis! {
-	impl assets_runtime_api::AssetsRuntimeApi<Block, CurrencyId, AccountId, Balance> for Runtime {
+	impl assets_runtime_api::AssetsRuntimeApi<Block, CurrencyId, AccountId, Balance, Asset> for Runtime {
 		fn balance_of(SafeRpcWrapper(asset_id): SafeRpcWrapper<CurrencyId>, account_id: AccountId) -> SafeRpcWrapper<Balance> /* Balance */ {
 			SafeRpcWrapper(<Assets as frame_support::traits::fungibles::Inspect::<AccountId>>::balance(asset_id, &account_id))
+		}
+
+		fn list_assets() -> Vec<Asset> {
+			CurrencyId::list_assets()
 		}
 	}
 

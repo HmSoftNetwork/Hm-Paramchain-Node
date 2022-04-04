@@ -6,10 +6,10 @@ use jsonrpc_derive::rpc;
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::{generic::BlockId, traits::Block as BlockT};
-use sp_std::sync::Arc;
+use sp_std::{sync::Arc, vec::Vec};
 
 #[rpc]
-pub trait AssetsApi<BlockHash, AssetId, AccountId, Balance>
+pub trait AssetsApi<BlockHash, AssetId, AccountId, Balance, Asset>
 where
 	AssetId: SafeRpcWrapperType,
 	Balance: SafeRpcWrapperType,
@@ -21,6 +21,9 @@ where
 		account: AccountId,
 		at: Option<BlockHash>,
 	) -> RpcResult<SafeRpcWrapper<Balance>>;
+
+	#[rpc(name = "assets_listAssets")]
+	fn list_assets(&self, at: Option<BlockHash>) -> RpcResult<Vec<Asset>>;
 }
 
 pub struct Assets<C, Block> {
@@ -34,18 +37,19 @@ impl<C, M> Assets<C, M> {
 	}
 }
 
-impl<C, Block, AssetId, AccountId, Balance>
-	AssetsApi<<Block as BlockT>::Hash, AssetId, AccountId, Balance>
-	for Assets<C, (Block, AssetId, AccountId, Balance)>
+impl<C, Block, AssetId, AccountId, Balance, Asset>
+	AssetsApi<<Block as BlockT>::Hash, AssetId, AccountId, Balance, Asset>
+	for Assets<C, (Block, AssetId, AccountId, Balance, Asset)>
 where
 	Block: BlockT,
 	AssetId: Codec + Send + Sync + 'static + SafeRpcWrapperType,
 	AccountId: Codec + Send + Sync + 'static,
 	Balance: Send + Sync + 'static + SafeRpcWrapperType,
+	Asset: Codec + Send + Sync + 'static,
 	C: Send + Sync + 'static,
 	C: ProvideRuntimeApi<Block>,
 	C: HeaderBackend<Block>,
-	C::Api: AssetsRuntimeApi<Block, AssetId, AccountId, Balance>,
+	C::Api: AssetsRuntimeApi<Block, AssetId, AccountId, Balance, Asset>,
 {
 	fn balance_of(
 		&self,
@@ -62,6 +66,22 @@ where
 
 		let runtime_api_result = api.balance_of(&at, asset_id, account_id);
 		// TODO(benluelo): Review what error message & code to use
+		runtime_api_result.map_err(|e| {
+			RpcError {
+				code: ErrorCode::ServerError(9876), // No real reason for this value
+				message: "Something wrong".into(),
+				data: Some(format!("{:?}", e).into()),
+			}
+		})
+	}
+
+	fn list_assets(&self, at: Option<<Block as BlockT>::Hash>) -> RpcResult<Vec<Asset>> {
+		let api = self.client.runtime_api();
+
+		let at = BlockId::hash(at.unwrap_or_else(|| self.client.info().best_hash));
+
+		let runtime_api_result = api.list_assets(&at);
+
 		runtime_api_result.map_err(|e| {
 			RpcError {
 				code: ErrorCode::ServerError(9876), // No real reason for this value
