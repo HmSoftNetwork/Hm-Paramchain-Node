@@ -86,7 +86,7 @@ pub mod pallet {
 			pair: CurrencyPair<AssetId>,
 			amplification_coefficient: u16,
 			fee: Permill,
-			owner_fee: Permill,
+			protocol_fee: Permill,
 		},
 		ConstantProduct {
 			owner: AccountId,
@@ -433,7 +433,7 @@ pub mod pallet {
 					pair,
 					amplification_coefficient,
 					fee,
-					owner_fee,
+					protocol_fee,
 				} => (
 					owner.clone(),
 					StableSwap::<T>::do_create_pool(
@@ -441,7 +441,7 @@ pub mod pallet {
 						pair,
 						amplification_coefficient,
 						fee,
-						owner_fee,
+						protocol_fee,
 					)?,
 				),
 				PoolInitConfiguration::ConstantProduct { owner, pair, fee, owner_fee } =>
@@ -654,8 +654,7 @@ pub mod pallet {
 					// /!\ NOTE(hussein-aitlahcen): after this check, do not use pool.pair as the
 					// provided pair might have been swapped
 					ensure!(pair == pool.pair, Error::<T>::PairMismatch);
-					// NOTE: lp_fees includes owner_fees.
-					let (base_amount_excluding_fees, quote_amount, lp_fees, owner_fees) =
+					let (base_amount_excluding_fees, quote_amount, lp_fees, protocol_fees) =
 						StableSwap::<T>::do_compute_swap(&pool, &pool_account, quote_amount, true)?;
 
 					ensure!(
@@ -665,7 +664,13 @@ pub mod pallet {
 					T::Assets::transfer(pair.quote, who, &pool_account, quote_amount, keep_alive)?;
 
 					// NOTE(hussein-aitlance): no need to keep alive the pool account
-					T::Assets::transfer(pair.base, &pool_account, &pool.owner, owner_fees, false)?;
+					T::Assets::transfer(
+						pair.base,
+						&pool_account,
+						&pool.owner,
+						protocol_fees,
+						false,
+					)?;
 					T::Assets::transfer(
 						pair.base,
 						&pool_account,
@@ -673,11 +678,10 @@ pub mod pallet {
 						base_amount_excluding_fees,
 						false,
 					)?;
-					(base_amount_excluding_fees, lp_fees)
+					(base_amount_excluding_fees, lp_fees.safe_add(&protocol_fees)?)
 				},
 				ConstantProduct(constant_product_pool_info) => {
-					// NOTE: lp_fees includes owner_fees.
-					let (base_amount, quote_amount_excluding_lp_fee, lp_fees, owner_fees) =
+					let (base_amount, quote_amount_excluding_fees, lp_fees, owner_fees) =
 						Uniswap::<T>::do_compute_swap(
 							&constant_product_pool_info,
 							&pool_account,
@@ -685,6 +689,9 @@ pub mod pallet {
 							quote_amount,
 							true,
 						)?;
+					let total_fees = lp_fees.safe_add(&owner_fees)?;
+					let quote_amount_including_fees =
+						quote_amount_excluding_fees.safe_add(&total_fees)?;
 
 					ensure!(base_amount >= min_receive, Error::<T>::CannotRespectMinimumRequested);
 
@@ -692,19 +699,19 @@ pub mod pallet {
 						pair.quote,
 						who,
 						&pool_account,
-						quote_amount_excluding_lp_fee,
+						quote_amount_including_fees,
 						keep_alive,
 					)?;
 					// NOTE(hussein-aitlance): no need to keep alive the pool account
 					T::Assets::transfer(
 						pair.quote,
-						who,
+						&pool_account,
 						&constant_product_pool_info.owner,
 						owner_fees,
 						false,
 					)?;
 					T::Assets::transfer(pair.base, &pool_account, who, base_amount, false)?;
-					(base_amount, lp_fees)
+					(base_amount, total_fees)
 				},
 				PoolConfiguration::LiquidityBootstrapping(liquidity_bootstrapping_pool_info) => {
 					let current_block = frame_system::Pallet::<T>::current_block_number();

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use assets_rpc::{Assets, AssetsApi};
 use common::{AccountId, AccountIndex, Balance};
+use composable_traits::assets::Asset;
 use crowdloan_rewards_rpc::{CrowdloanRewards, CrowdloanRewardsApi};
 pub use sc_rpc_api::DenyUnsafe;
 use sc_transaction_pool_api::TransactionPool;
@@ -37,7 +38,7 @@ where
 	C: Send + Sync + 'static,
 	C::Api: substrate_frame_rpc_system::AccountNonceApi<B, AccountId, AccountIndex>,
 	C::Api: pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi<B, Balance>,
-	C::Api: assets_runtime_api::AssetsRuntimeApi<B, CurrencyId, AccountId, Balance>,
+	C::Api: assets_runtime_api::AssetsRuntimeApi<B, CurrencyId, AccountId, Balance, Asset>,
 	C::Api: crowdloan_rewards_runtime_api::CrowdloanRewardsRuntimeApi<B, AccountId, Balance>,
 	C::Api: BlockBuilder<B>,
 	P: TransactionPool + 'static,

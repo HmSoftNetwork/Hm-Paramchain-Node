@@ -46,6 +46,7 @@ struct Env {
 #[tokio::main]
 async fn main() -> tide::Result<()> {
 	env_logger::init();
+	dotenv::dotenv().expect("couldn't load env vars");
 	let args = Main::from_args();
 
 	let state = init().await;
