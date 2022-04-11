@@ -27,8 +27,8 @@ pub use xcmp::{MaxInstructions, UnitWeightCost};
 use common::{
 	impls::DealWithFees, AccountId, AccountIndex, Address, Amount, AuraId, Balance, BlockNumber,
 	BondOfferId, CouncilInstance, EnsureRootOrHalfCouncil, Hash, Moment, MosaicRemoteAssetId,
-	MultiExistentialDeposits, Signature, AVERAGE_ON_INITIALIZE_RATIO, DAYS, HOURS,
-	MAXIMUM_BLOCK_WEIGHT, NORMAL_DISPATCH_RATIO, SLOT_DURATION,
+	MultiExistentialDeposits, NativeExistentialDeposit, Signature, AVERAGE_ON_INITIALIZE_RATIO,
+	DAYS, HOURS, MAXIMUM_BLOCK_WEIGHT, NORMAL_DISPATCH_RATIO, SLOT_DURATION,
 };
 use composable_support::rpc_helpers::SafeRpcWrapper;
 use cumulus_primitives_core::ParaId;
@@ -62,7 +62,6 @@ pub use frame_support::{
 };
 
 use codec::Encode;
-use composable_traits::assets::Asset;
 use frame_support::traits::{fungibles, EqualPrivilegeOnly, OnRuntimeUpgrade};
 use frame_system as system;
 use scale_info::TypeInfo;
@@ -770,6 +769,7 @@ impl assets_registry::Config for Runtime {
 	type UpdateAdminOrigin = EnsureRootOrHalfCouncil;
 	type LocalAdminOrigin = assets_registry::EnsureLocalAdmin<Runtime>;
 	type ForeignAdminOrigin = assets_registry::EnsureForeignAdmin<Runtime>;
+	type WeightInfo = weights::assets_registry::WeightInfo<Runtime>;
 }
 
 impl governance_registry::Config for Runtime {
@@ -888,10 +888,10 @@ impl dutch_auction::Config for Runtime {
 	type Event = Event;
 	type MultiCurrency = Assets;
 	type PalletId = DutchAuctionId;
-	type WeightToFee = WeightToFee;
 	type OrderId = u128;
 	type UnixTime = Timestamp;
 	type WeightInfo = weights::dutch_auction::WeightInfo<Runtime>;
+	type PositionExistentialDeposit = NativeExistentialDeposit;
 }
 
 parameter_types! {
@@ -946,7 +946,7 @@ impl lending::Config for Runtime {
 	type MultiCurrency = Assets;
 	type Liquidation = Liquidations;
 	type UnixTime = Timestamp;
-	type MaxLendingCount = MaxLendingCount;
+	type MaxMarketCount = MaxLendingCount;
 	type AuthorityId = oracle::crypto::BathurstStId;
 	type WeightInfo = weights::lending::WeightInfo<Runtime>;
 	type LiquidationStrategyId = u32;
@@ -1146,20 +1146,17 @@ mod benches {
 		[liquidations, Liquidations]
 		[bonded_finance, BondedFinance]
 		//FIXME: broken with dali [lending, Lending]
-	  [uniswap_v2, ConstantProductDex]
-	  [curve_amm, StableSwapDex]
-	  [liquidity_bootstrapping, LiquidityBootstrapping]
+		[uniswap_v2, ConstantProductDex]
+		[curve_amm, StableSwapDex]
+		[liquidity_bootstrapping, LiquidityBootstrapping]
+		[assets_registry, AssetsRegistry]
 	);
 }
 
 impl_runtime_apis! {
-	impl assets_runtime_api::AssetsRuntimeApi<Block, CurrencyId, AccountId, Balance, Asset> for Runtime {
+	impl assets_runtime_api::AssetsRuntimeApi<Block, CurrencyId, AccountId, Balance> for Runtime {
 		fn balance_of(asset_id: SafeRpcWrapper<CurrencyId>, account_id: AccountId) -> SafeRpcWrapper<Balance> /* Balance */ {
 			SafeRpcWrapper(<Assets as fungibles::Inspect::<AccountId>>::balance(asset_id.0, &account_id))
-		}
-
-		fn list_assets() -> Vec<Asset> {
-			CurrencyId::list_assets()
 		}
 	}
 
