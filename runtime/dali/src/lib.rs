@@ -1181,8 +1181,7 @@ mod benches {
 		[uniswap_v2, ConstantProductDex]
 		[curve_amm, StableSwapDex]
 		[liquidity_bootstrapping, LiquidityBootstrapping]
-		[assets_registry, AssetsRegistry]
-		[pablo, Pablo]
+		[assets_registry, AssetsRegistry]		
 	);
 }
 
