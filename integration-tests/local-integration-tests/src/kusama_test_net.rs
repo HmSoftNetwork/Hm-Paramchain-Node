@@ -26,7 +26,6 @@ pub const BOB: [u8; 32] = [5_u8; 32];
 pub const CHARLIE: [u8; 32] = [6_u8; 32];
 
 pub const PICA: Balances = 1_000_000_000_000;
-pub const KSM: Balances = PICA / 50;
 
 decl_test_parachain! {
 	pub struct This {
@@ -169,6 +168,12 @@ pub fn picasso_ext(parachain_id: u32) -> sp_io::TestExternalities {
 		],
 	}
 	.assimilate_storage(&mut storage)
+	.unwrap();
+
+	<liquidations::GenesisConfig as GenesisBuild<Runtime>>::assimilate_storage(
+		&liquidations::GenesisConfig {},
+		&mut storage,
+	)
 	.unwrap();
 
 	let mut externalities = sp_io::TestExternalities::new(storage);
