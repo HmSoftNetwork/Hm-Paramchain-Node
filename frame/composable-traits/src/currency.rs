@@ -73,15 +73,16 @@ pub trait BalanceLike:
 	+ TypeInfo
 {
 }
-impl<T> BalanceLike for T where
-	T: AtLeast32BitUnsigned
-		+ FullCodec
-		+ Copy
-		+ Default
-		+ Debug
-		+ MaybeSerializeDeserialize
-		+ MaxEncodedLen
-		+ TypeInfo
+impl<
+		T: AtLeast32BitUnsigned
+			+ FullCodec
+			+ Copy
+			+ Default
+			+ Debug
+			+ MaybeSerializeDeserialize
+			+ MaxEncodedLen
+			+ TypeInfo,
+	> BalanceLike for T
 {
 }
 
