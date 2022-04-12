@@ -103,7 +103,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	// The version of the runtime specification. A full node will not attempt to use its native
 	//   runtime in substitute for the on-chain Wasm runtime unless all of `spec_name`,
 	//   `spec_version`, and `authoring_version` are the same between Wasm and native.
-	spec_version: 1000,
+	spec_version: 1100,
 	impl_version: 1,
 	apis: RUNTIME_API_VERSIONS,
 	transaction_version: 1,
@@ -214,6 +214,7 @@ impl assets_registry::Config for Runtime {
 	type UpdateAdminOrigin = EnsureRootOrHalfCouncil;
 	type LocalAdminOrigin = assets_registry::EnsureLocalAdmin<Runtime>;
 	type ForeignAdminOrigin = assets_registry::EnsureForeignAdmin<Runtime>;
+	type WeightInfo = weights::assets_registry::WeightInfo<Runtime>;
 }
 
 impl assets::Config for Runtime {
@@ -902,6 +903,7 @@ mod benches {
 		[currency_factory, CurrencyFactory]
 		[bonded_finance, BondedFinance]
 		[vesting, Vesting]
+		[assets_registry, AssetsRegistry]
 	);
 }
 
