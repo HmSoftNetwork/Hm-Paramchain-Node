@@ -17,6 +17,10 @@
 pub struct Currency<const ID: u128, const EXPONENT: u8> {}
 
 impl<const ID: u128, const EXPONENT: u8> Currency<ID, EXPONENT> {
+	/// The id of the currency. This is fairly arbitrary, and is only used to differentiate between
+	/// different currencies.
+	pub const ID: u128 = ID;
+
 	/// The exponent of the currency. Specifies the precision level; can be thought of as the number
 	/// of decimal points in base 10.
 	///
@@ -30,10 +34,6 @@ impl<const ID: u128, const EXPONENT: u8> Currency<ID, EXPONENT> {
 	/// - any value higher than `38` does not make sense (`10^39 > 2^128`) and will automatically
 	///   saturate at [`u128::MAX`].
 	pub const EXPONENT: u8 = EXPONENT;
-
-	/// The id of the currency. This is fairly arbitrary, and is only used to differentiate between
-	/// different currencies.
-	pub const ID: u128 = ID;
 
 	/// The `one` value of the currency, calculated with [`Self::EXPONENT`].
 	///
@@ -85,7 +85,7 @@ impl<const ID: u128, const EXPONENT: u8> Currency<ID, EXPONENT> {
 /// ```rust
 /// # use pallet_lending::currency::{Currency, RuntimeCurrency};
 /// type ACOIN = Currency<12345, 10>;
-/// let runtime_currency = ACOIN::instance()
+/// let runtime_currency = ACOIN::instance();
 /// assert_eq!(runtime_currency.one(), ACOIN::ONE);
 /// ```
 ///
@@ -94,12 +94,12 @@ impl<const ID: u128, const EXPONENT: u8> Currency<ID, EXPONENT> {
 /// ```rust
 /// # use pallet_lending::currency::{Currency, RuntimeCurrency};
 /// let lp_token_id = create_btc_usdt_vault();
-/// let rc = RuntimeCurrency::new(lp_token_id, 12)
+/// let rc = RuntimeCurrency::new(lp_token_id, 12);
 /// let ten_lp_tokens = rc.units(10);
 ///
 /// fn create_btc_usdt_vault() -> u128 {
-/// 	// do something here and return the id of an lp_token...
-/// 	42
+///     // do something here and return the id of an lp_token...
+///     42
 /// }
 /// ```
 ///
@@ -107,7 +107,9 @@ impl<const ID: u128, const EXPONENT: u8> Currency<ID, EXPONENT> {
 ///
 /// ```rust
 /// # use pallet_lending::currency::{Currency, RuntimeCurrency};
-/// let currencies = (0..100).zip(iter::repeat(12).map(RuntimeCurrency::new);
+/// let currencies = (0..100)
+///     .zip(std::iter::repeat(12))
+///     .map(|(id, exp)| RuntimeCurrency::new(id, exp));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeCurrency {
@@ -167,44 +169,8 @@ impl RuntimeCurrency {
 	}
 }
 
-// pub struct RuntimeCurrencyWithExponent<const EXPONENT: u8> {
-// 	id: u128,
-// }
-
-// impl<const EXPONENT: u8> RuntimeCurrencyWithExponent<EXPONENT> {
-// 	/// The `one` value of the currency, calculated with [`Self::EXPONENT`].
-// 	///
-// 	/// # Examples
-// 	///
-// 	/// ```
-// 	/// # use pallet_lending::currency::Currency;
-// 	///
-// 	/// type ACOIN = Currency<12345, 10>;
-// 	/// assert_eq!(ACOIN::ONE, 10_000_000_000);
-// 	/// ```
-// 	pub const ONE: u128 = 10_u128.pow(Self::EXPONENT as u32);
-
-// 	/// Returns the provided amount of the currency, cannonicalized to [`Self::ONE`], saturating
-// 	/// at the numeric bounds ([`u128::MAX`]).
-// 	///
-// 	/// # Examples
-// 	///
-// 	/// ```
-// 	/// # use pallet_lending::currency::Currency;
-// 	///
-// 	/// type ACOIN = Currency<12345, 10>;
-// 	/// assert_eq!(ACOIN::units(7), 70_000_000_000);
-// 	///
-// 	/// // saturates at u128::MAX
-// 	/// assert_eq!(ACOIN::units(u128::MAX), u128::MAX);
-// 	/// ```
-// 	pub const fn units(ones: u128) -> u128 {
-// 		ones.saturating_mul(Self::ONE)
-// 	}
-// }
-
 // separate module so that the `allow` attribute isn't appllied to the entirety of the currency
-// module.
+// module or per item.
 pub mod defs {
 	#![allow(clippy::upper_case_acronyms)]
 

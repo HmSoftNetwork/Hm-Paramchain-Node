@@ -12,8 +12,9 @@ use frame_benchmarking::Zero;
 use std::ops::{Div, Mul};
 
 use crate::{
-	self as pallet_lending, accrue_interest_internal, currency::*, mocks::*, models::BorrowerData,
-	setup::assert_last_event, AccruedInterest, Error, MarketIndex,
+	self as pallet_lending, accrue_interest_internal, currency::*, mocks::*,
+	models::borrower_data::BorrowerData, setup::assert_last_event, AccruedInterest, Error,
+	MarketIndex,
 };
 use codec::{Decode, Encode};
 use composable_support::validation::{TryIntoValidated, Validated};
@@ -271,7 +272,8 @@ fn can_create_valid_market() {
 			),
 			"Creating a market with insufficient funds should fail, with the error message being \"BalanceTooLow\".
 			The other fields are also checked to make sure any changes are tested and accounted for, perhaps one of those fields changed?
-			Market creation result was {should_have_failed:#?}",
+			Market creation result was {:#?}",
+			should_have_failed
 		);
 
 		Tokens::mint_into(BORROW_ASSET_ID, &*ALICE, INITIAL_BORROW_ASSET_AMOUNT).unwrap();
@@ -282,7 +284,8 @@ fn can_create_valid_market() {
 		assert!(
 			matches!(should_be_created, Ok(PostDispatchInfo { actual_weight: None, pays_fee: Pays::Yes },)),
 			"Market creation should have succeeded, since ALICE now has BTC.
-			Market creation result was {should_be_created:#?}",
+			Market creation result was {:#?}",
+			should_be_created,
 		);
 
 		let initial_pool_size = Lending::calculate_initial_pool_size(BORROW_ASSET_ID).unwrap();
@@ -294,6 +297,8 @@ fn can_create_valid_market() {
 			"ALICE should have 'paid' the inital_pool_size into the market vault.
 			alice_balance_after_market_creation: {alice_balance_after_market_creation}
 			initial_pool_size: {initial_pool_size}",
+			alice_balance_after_market_creation = alice_balance_after_market_creation,
+			initial_pool_size = initial_pool_size,
 		);
 
 		let system_events = System::events();
@@ -314,7 +319,8 @@ fn can_create_valid_market() {
 				assert_eq!(
 					Lending::total_available_to_be_borrowed(&created_market_id).unwrap(),
 					initial_pool_size,
-					"The market should have {initial_pool_size} in it."
+					"The market should have {} in it.",
+					initial_pool_size,
 				);
 
 				assert_eq!(
@@ -328,10 +334,14 @@ fn can_create_valid_market() {
 				assert_eq!(
 					alice_total_debt_with_interest,
 					0,
-					"The borrowed balance of ALICE should be 0. Found {alice_total_debt_with_interest:#?}",
+					"The borrowed balance of ALICE should be 0. Found {:#?}",
+					alice_total_debt_with_interest
 				);
 			},
-			_ => panic!("Unexpected value for System::events(); found {system_events:#?}"),
+			_ => panic!(
+				"Unexpected value for System::events(); found {:#?}",
+				system_events
+			),
 		}
 	});
 }
@@ -596,8 +606,6 @@ fn test_repay_partial_amount() {
 			COLLATERAL::ID,
 		);
 
-		let debt_asset = crate::DebtTokenForMarket::<Runtime>::get(market_index).unwrap();
-
 		let borrow_asset_deposit = BORROW::units(1_000_000);
 		assert_ok!(Tokens::mint_into(BORROW::ID, &CHARLIE, borrow_asset_deposit));
 		assert_extrinsic_event::<Runtime>(
@@ -635,7 +643,6 @@ fn test_repay_partial_amount() {
 				amount: alice_limit / 2,
 			}),
 		);
-		dbg!(alice_limit);
 
 		process_and_progress_blocks(1_000);
 
@@ -674,6 +681,7 @@ fn test_repay_partial_amount() {
 			}),
 		);
 
+		// wait a few blocks
 		process_and_progress_blocks(10);
 
 		let alice_total_debt_with_interest =
@@ -685,7 +693,7 @@ fn test_repay_partial_amount() {
 
 		assert_ok!(Tokens::mint_into(BORROW::ID, &ALICE, alice_total_debt_with_interest));
 
-		// can't repay all balance with partial repay strategy
+		// can't repay more than is owed
 		assert_err!(
 			Lending::repay_borrow(
 				Origin::signed(*ALICE),
@@ -717,12 +725,8 @@ fn test_repay_partial_amount() {
 				amount: alice_total_debt_with_interest,
 			}),
 		);
-		dbg!(alice_balance);
-		dbg!(Tokens::balance(COLLATERAL::ID, &ALICE));
-		dbg!(Tokens::balance(BORROW::ID, &ALICE));
-		// assert_eq!(Lending(COLLATERAL::ID, &ALICE), alice_balance);
+
 		assert_eq!(Lending::collateral_of_account(&market_index, &*ALICE), Ok(alice_balance));
-		// assert!(Tokens::balance(COLLATERAL::ID, &ALICE).is_zero());
 	});
 }
 
@@ -1225,7 +1229,8 @@ fn create_market<const NORMALIZED_PRICE: u128>(
 		(*market_id, *vault_id)
 	} else {
 		panic!(
-			"System::events() did not contain the market creation event. Found {system_events:#?}"
+			"System::events() did not contain the market creation event. Found {:#?}",
+			system_events
 		)
 	}
 }

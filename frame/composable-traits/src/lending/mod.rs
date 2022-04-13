@@ -129,6 +129,8 @@ pub struct MarketConfig<VaultId, AssetId, AccountId, LiquidationStrategyId> {
 }
 
 /// Different ways that a market can be repaid.
+// REVIEW: Perhaps add an "interest only" strategy?
+// InterestOnly
 #[derive(Encode, Decode, TypeInfo, Debug, Clone, PartialEq)]
 pub enum RepayStrategy<T> {
 	/// Attempt to repay the entirety of the remaining debt.
@@ -142,21 +144,19 @@ pub enum RepayStrategy<T> {
 	/// interest = 10
 	///
 	/// total_debt_with_interest = 10 + 90
-	/// 						 = 100
+	///                          = 100
 	///
 	/// repay = 20
 	///
 	/// new_principal = principal - ((principal / total_debt_with_interest) * repay)
-	/// 			  = 90 - ((90 / 100) * 20)
-	/// 			  = 72
+	///               = 90 - ((90 / 100) * 20)
+	///               = 72
 	///
 	/// new_interest = interest - ((interest / total_debt_with_interest) * repay)
-	/// 			 = 10 - ((10 / 100) * 20)
-	/// 			 = 8
+	///              = 10 - ((10 / 100) * 20)
+	///              = 8
 	/// ```
 	PartialAmount(T),
-	// REVIEW: Perhaps add an "interest only" strategy?
-	// InterestOnly
 }
 
 /// The total amount of debt for an account on a market, if any.
@@ -194,7 +194,8 @@ impl<T> TotalDebtWithInterest<T> {
 	///
 	/// [`Amount`]: TotalDebtWithInterest::Amount
 	/// [`NoDebt`]: TotalDebtWithInterest::NoDebt
-	// #[cfg(test)]
+	#[cfg(feature = "test-utils")]
+	#[allow(clippy::panic)] // only available in tests
 	pub fn unwrap_amount(self) -> T {
 		match self {
 			TotalDebtWithInterest::Amount(amount) => amount,

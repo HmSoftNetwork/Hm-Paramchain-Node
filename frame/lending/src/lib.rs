@@ -56,6 +56,11 @@ mod setup;
 #[cfg(any(feature = "runtime-benchmarks", test))]
 pub mod currency;
 
+/// Various helpers used in the implementation of [`Lending::repay_borrow`].
+///
+/// [`Lending::repay_borrow`]: composable_traits::lending::Lending::repay_borrow
+mod repay_borrow;
+
 #[frame_support::pallet]
 pub mod pallet {
 	use crate::{models::borrower_data::BorrowerData, weights::WeightInfo};
@@ -472,7 +477,7 @@ pub mod pallet {
 
 	/// Indexed lending instances. Maps markets to their respective [`MarketConfig`].
 	///
-	/// ```
+	/// ```text
 	/// MarketIndex -> MarketConfig
 	/// ```
 	#[pallet::storage]
@@ -481,7 +486,7 @@ pub mod pallet {
 
 	/// Maps markets to their corresponding debt token.
 	///
-	/// ```
+	/// ```text
 	/// MarketIndex -> debt asset
 	/// ```
 	///
@@ -533,8 +538,8 @@ pub mod pallet {
 	///
 	/// Note that due to the discrepency described above, [`Lending::total_interest`] and
 	/// [`Lending::total_debt_with_interest`] are *also* inaccurate. Since it uses the calculation
-	/// described in ***Reasoning and Usage***, it may
-	/// be *slightly* less than the *actual* amount of interest.
+	/// described in ***Reasoning and Usage***, it may be *slightly* less than the *actual* amount
+	/// of interest.
 	///
 	/// # Possible Solutions/ Alternatives
 	///
@@ -587,7 +592,6 @@ pub mod pallet {
 	/// if first borrow: market index when the borrowed occured
 	/// if additional borrow: market index adjusted wrt the previous index
 	#[pallet::storage]
-	#[pallet::getter(fn debt_index)]
 	pub type DebtIndex<T: Config> = StorageDoubleMap<
 		_,
 		Twox64Concat,
@@ -602,7 +606,6 @@ pub mod pallet {
 	///
 	/// (Market, Account) -> Timestamp
 	#[pallet::storage]
-	// #[pallet::getter(fn borrow_timestamp)]
 	pub type BorrowTimestamp<T: Config> = StorageDoubleMap<
 		_,
 		Twox64Concat,
@@ -614,7 +617,6 @@ pub mod pallet {
 	>;
 
 	#[pallet::storage]
-	// #[pallet::getter(fn borrow_rent)]
 	pub type BorrowRent<T: Config> = StorageDoubleMap<
 		_,
 		Twox64Concat,
@@ -1129,6 +1131,59 @@ pub mod pallet {
 				.map_err(|_| Error::<T>::AssetPriceNotFound.into())
 		}
 
+		/// Some of these checks remain to provide better errors. All redundant checks are explained
+		/// here.
+		///
+		/// NOTE(benluelo, 1): If the account doesn't have enough borrow asset, blindly using
+		/// `transfer` *works* (since the extrinsic is transactional) but the error message is
+		/// "BalanceTooLow". It *would* be possible to `MultiCurrency::transfer(..).map_err(..)`
+		/// but given that `T::MultiCurrency` is generic, we don't have access to the `Error`
+		/// type of orml_tokens (the pallet used for multicurrency currently), we would have to
+		/// match on `&'static str`'s which is far from ideal. If more specific/ accurate errors
+		/// aren't required, then these checks can be removed. If it's decided that the cost of
+		/// these checks is too high, then the string matching solution can be revisited. There
+		/// could also probably be some "magic" done with associated types on the
+		/// `pallet_lending::Config` trait - adding a `#[pallet::constant]` for all the
+		/// enumerable errors like this:
+		///
+		/// ```rust,ignore
+		/// #[pallet::config]
+		/// pub trait Config {
+		///     // snip
+		///
+		///     type TransferError: Into<&'static str> + Into<DispatchError>;
+		///
+		///     #[pallet::constant]
+		///     type TransferErrorBalanceTooLow: Get<Self::TransferError>;
+		///
+		///     // snip
+		/// }
+		/// ```
+		///
+		/// Which would be used like this:
+		///
+		/// ```rust,ignore
+		/// // This could also be implemented as a wrapper trait
+		/// fn map_dispatch_err<T: pallet::Config, TFrom: Into<DispatchError>>(
+		///     from: TFrom,
+		///     to: pallet::Error<T>,
+		/// ) -> impl FnOnce(DispatchError) -> DispatchError {
+		///     |err| if err == from.into() { to.into() } else { err }
+		/// }
+		///
+		/// // In the extrinsic implementation:
+		/// <T as Config>::MultiCurrency::transfer(
+		///     borrow_asset,
+		///     &market_account,
+		///     borrowing_account,
+		///     amount_to_borrow,
+		///     false,
+		/// )
+		/// .map_err(map_dispatch_err(
+		///     <T as Config>::TransferErrorBalanceTooLow::get(),
+		///     Error::<T>::NotEnoughBorrowAsset,
+		/// ))?;
+		/// ```
 		fn can_borrow(
 			market_id: &MarketIndex,
 			debt_owner: &T::AccountId,
@@ -1136,9 +1191,6 @@ pub mod pallet {
 			market: MarketConfigOf<T>,
 			market_account: &T::AccountId,
 		) -> Result<(), DispatchError> {
-			// Some of these checks remain to provide better errors. Any instance of a check that
-			// *could* be removed is annoted with a NOTE comment explaining what purpose it serves.
-
 			// REVIEW: Unnecessary check?
 			if let Some(latest_borrow_timestamp) = BorrowTimestamp::<T>::get(market_id, debt_owner)
 			{
@@ -1153,14 +1205,7 @@ pub mod pallet {
 			let borrow_amount_value = Self::get_price(borrow_asset, amount_to_borrow)?;
 			ensure!(borrow_limit >= borrow_amount_value, Error::<T>::NotEnoughCollateralToBorrow);
 
-			// NOTE(benluelo): If the account doesn't have enough borrow asset, blindly using
-			// `transfer` *works* (since the extrinsic is transactional) but the error message is
-			// "BalanceTooLow". It *would* be possible to `transfer(..).map_err(..)` but given that
-			// we don't have access to the `Error` type of orml_tokens (the pallet used for
-			// multicurrency currently), we would have to match on `&'static str`'s which is far
-			// from ideal. If more specific/ accurate errors aren't required, then these checks can
-			// be removed. If it's decided that the cost of these checks is too high, then the
-			// string matching solution can be revisited.
+			// See note 1
 			ensure!(
 				<T as Config>::MultiCurrency::can_withdraw(
 					borrow_asset,
@@ -1175,6 +1220,7 @@ pub mod pallet {
 			if !BorrowRent::<T>::contains_key(market_id, debt_owner) {
 				let deposit = T::WeightToFee::calc(&T::WeightInfo::liquidate(1));
 
+				// See note 1
 				ensure!(
 					<T as Config>::NativeCurrency::can_withdraw(debt_owner, deposit)
 						.into_result()
@@ -1318,42 +1364,20 @@ pub mod pallet {
 			let market = Self::get_market(market_id)?;
 			let market_account = Self::account_id(market_id);
 
-			// REVIEW: Remove checks? Extrinsic is transactional. Will also allow removal of
-			// `expect` call.
-			// ensure!(
-			// 	<T as Config>::MultiCurrency::can_withdraw(
-			// 		market.collateral_asset,
-			// 		account,
-			// 		amount
-			// 	)
-			// 	.into_result()
-			// 	.is_ok(),
-			// 	Error::<T>::TransferFailed
-			// );
-
-			// ensure!(
-			// 	<T as Config>::MultiCurrency::can_deposit(
-			// 		market.collateral_asset,
-			// 		&market_account,
-			// 		amount
-			// 	) == DepositConsequence::Success,
-			// 	Error::<T>::TransferFailed
-			// );
-
 			AccountCollateral::<T>::try_mutate(market_id, account, |collateral_balance| {
 				let new_collateral_balance =
 					collateral_balance.unwrap_or_default().safe_add(&amount)?;
 				collateral_balance.replace(new_collateral_balance);
 				Result::<(), DispatchError>::Ok(())
 			})?;
+
 			<T as Config>::MultiCurrency::transfer(
 				market.collateral_asset,
 				account,
 				&market_account,
 				amount,
 				true,
-			)
-			.expect("impossible; qed;");
+			)?;
 			Ok(())
 		}
 
@@ -1593,13 +1617,13 @@ pub mod pallet {
 
 			let repaid_amount = match total_repay_amount {
 				RepayStrategy::TotalDebt => {
-					// transfer borrow token interest, from -> market
+					// pay interest, from -> market
 					// burn debt token interest from market
 					PayInterest::<T> {
 						borrow_asset,
 						debt_asset,
 
-						payer_account: &from,
+						payer_account: from,
 						market_account: &market_account,
 
 						amount_of_interest_to_repay: beneficiary_interest_on_market,
@@ -1607,14 +1631,15 @@ pub mod pallet {
 					}
 					.run()?;
 
-					// release and burn borrowed debt from beneficiary
+					// release and burn debt token from beneficiary and transfer borrow asset to
+					// market, paid by `from`
 					RepayPrincipal::<T> {
 						borrow_asset,
 						debt_token: debt_asset,
 
-						payer_account: &from,
+						payer_account: from,
 						market_account: &market_account,
-						beneficiary_account: &beneficiary,
+						beneficiary_account: beneficiary,
 
 						amount_of_debt_to_repay: beneficiary_borrow_asset_principal,
 
@@ -1655,7 +1680,7 @@ pub mod pallet {
 						borrow_asset,
 						debt_asset,
 
-						payer_account: &from,
+						payer_account: from,
 						market_account: &market_account,
 
 						amount_of_interest_to_repay: interest_percentage
@@ -1667,14 +1692,15 @@ pub mod pallet {
 					}
 					.run()?;
 
-					// release borrow asset and burn debt token from beneficiary, paid by `from`
+					// release and burn debt token from beneficiary and transfer borrow asset to
+					// market, paid by `from`
 					RepayPrincipal::<T> {
 						borrow_asset,
 						debt_token: debt_asset,
 
-						payer_account: &from,
+						payer_account: from,
 						market_account: &market_account,
-						beneficiary_account: &beneficiary,
+						beneficiary_account: beneficiary,
 
 						amount_of_debt_to_repay: principal_percentage
 							.checked_mul_int::<u128>(partial_repay_amount.into())
@@ -1682,7 +1708,8 @@ pub mod pallet {
 							.into(),
 
 						keep_alive: true,
-					};
+					}
+					.run()?;
 
 					// the above will short circuit if amount cannot be paid, so if this is reached
 					// then we know `partial_repay_amount` has been repaid
@@ -1953,156 +1980,11 @@ pub mod pallet {
 	}
 }
 
-// TODO: Move to module file
-/// Various helpers used in the implementation of [`Lending::repay_borrow`].
-///
-/// [`Lending::repay_borrow`]: composable_traits::lending::Lending::repay_borrow
-mod repay_borrow {
-	use composable_traits::defi::DeFiComposableConfig;
-	use frame_support::{
-		traits::fungibles::{Inspect, Mutate, MutateHold, Transfer},
-		DebugNoBound,
-	};
-	use sp_runtime::DispatchError;
+// use sp_runtime::DispatchError;
 
-	use crate::Config;
-
-	/// Repay `amount` of `beneficiary_account`'s `borrow_asset` debt principal.
-	///
-	/// Release given `amount` of `debt_token` from `beneficiary_account`, transfer `amount` from
-	/// `payer_account` to `market_account`, and then burn `amount` of `debt_token` from
-	/// `beneficiary_account`.
-	#[derive(Copy, Clone, DebugNoBound, PartialEq, Eq)]
-	pub(crate) struct RepayPrincipal<'a, T: Config> {
-		/// The borrowed asset being repaid.
-		pub(crate) borrow_asset: <T as DeFiComposableConfig>::MayBeAssetId,
-
-		/// The debt token to burn from `beneficiary_account`.
-		pub(crate) debt_token: <T as DeFiComposableConfig>::MayBeAssetId,
-
-		/// The account repaying `beneficiary_account`'s debt.
-		pub(crate) payer_account: &'a T::AccountId,
-
-		/// The market account that will be repaid.
-		pub(crate) market_account: &'a T::AccountId,
-
-		/// The account that took out the borrow and who's debt is being repaid, i.e. the
-		/// beneficiary.
-		pub(crate) beneficiary_account: &'a T::AccountId,
-
-		/// The amount of `beneficiary_account`'s debt to be repaid by `payer_account`.
-		///
-		/// NOTE: This is assumed to be `<=` the total principal amount.
-		pub(crate) amount_of_debt_to_repay: <T as DeFiComposableConfig>::Balance,
-
-		// Whether or not to keep `from_account` alive.
-		pub(crate) keep_alive: bool,
-	}
-
-	impl<'a, T: Config> RepayPrincipal<'a, T> {
-		/// See the type level docs for [`RepayPrincipal`].
-		pub(crate) fn run(self) -> Result<(), DispatchError> {
-			// release and burn debt token from beneficiary
-			<T as Config>::MultiCurrency::release(
-				self.debt_token,
-				self.beneficiary_account,
-				self.amount_of_debt_to_repay,
-				false, // <- we don't want best_effort, all of it must be released
-			)?;
-			<T as Config>::MultiCurrency::burn_from(
-				self.debt_token,
-				self.beneficiary_account,
-				self.amount_of_debt_to_repay,
-			)?;
-
-			// transfer from payer -> market
-			// payer repays the debt
-			<T as Config>::MultiCurrency::transfer(
-				self.borrow_asset,
-				self.payer_account,
-				self.market_account,
-				self.amount_of_debt_to_repay,
-				self.keep_alive,
-			)?;
-
-			Ok(())
-		}
-	}
-
-	/// Pays off the interest accrued in a market.
-	///
-	/// Transfers `amount` of `borrow_asset` from `payer_account` to `market_account`,
-	/// and then burns the same `amount` of `debt_asset` from `market_account`.
-	#[derive(Copy, Clone, DebugNoBound, PartialEq, Eq)]
-	pub(crate) struct PayInterest<'a, T: Config> {
-		/// The borrowed asset.
-		///
-		/// This is the asset that was originally borrowed, and is the same asset used to pay the
-		/// interest on the borrow (loan).
-		pub(crate) borrow_asset: <T as DeFiComposableConfig>::MayBeAssetId,
-
-		/// The debt asset.
-		///
-		/// This is the asset the market accrues interest into.
-		pub(crate) debt_asset: <T as DeFiComposableConfig>::MayBeAssetId,
-
-		/// The account that is paying off the interest.
-		pub(crate) payer_account: &'a T::AccountId,
-
-		/// The market account that owns the interest being paid off.
-		pub(crate) market_account: &'a T::AccountId,
-
-		/// How much interest is being paid off.
-		///
-		/// NOTE: This is assumed to be `<=` the total interest amount.
-		pub(crate) amount_of_interest_to_repay: <T as DeFiComposableConfig>::Balance,
-
-		/// Whether or not to keep `from_account` alive.
-		pub(crate) keep_alive: bool,
-	}
-
-	impl<'a, T: Config> PayInterest<'a, T> {
-		/// See the type level docs for [`PayInterest`].
-		pub(crate) fn run(self) -> Result<(), DispatchError> {
-			<T as Config>::MultiCurrency::transfer(
-				self.borrow_asset,
-				self.payer_account,
-				self.market_account,
-				self.amount_of_interest_to_repay,
-				self.keep_alive,
-			)?;
-
-			let market_debt_asset_balance =
-				<T as Config>::MultiCurrency::balance(self.debt_asset, self.market_account);
-
-			<T as Config>::MultiCurrency::burn_from(
-				self.debt_asset,
-				self.market_account,
-				// NOTE(benluelo):
-				///
-				/// Due to precision errors, the actual interest balance may be *slightly* less
-				/// than the amount requested to repay. If that's the case, burn the amount
-				/// actually on the account. See the documentation on `DebtTokenForMarket` for more
-				/// information.
-				if market_debt_asset_balance < self.amount_of_interest_to_repay {
-					market_debt_asset_balance
-				} else {
-					self.amount_of_interest_to_repay
-				},
-			)?;
-
-			Ok(())
-		}
-	}
-}
-
-use sp_runtime::DispatchError;
-
-fn map_dispatch_err<T: pallet::Config, TFrom: Into<DispatchError>>(
-	from: TFrom,
-	to: pallet::Error<T>,
-) -> impl FnOnce(DispatchError) -> DispatchError {
-	// <T as pallet::Config>::MultiCurrency
-	|err| if err == from.into() { to.into() } else { err }
-	// todo!()
-}
+// fn map_dispatch_err<T: pallet::Config, TFrom: Into<DispatchError>>(
+// 	from: TFrom,
+// 	to: pallet::Error<T>,
+// ) -> impl FnOnce(DispatchError) -> DispatchError {
+// 	|err| if err == from.into() { to.into() } else { err }
+// }

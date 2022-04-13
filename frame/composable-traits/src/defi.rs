@@ -10,10 +10,7 @@ use sp_runtime::{
 };
 use sp_std::fmt::Debug;
 
-use crate::{
-	currency::{AssetIdLike, BalanceLike, MathBalance},
-	defi::validate::MoreThanOne,
-};
+use crate::currency::{AssetIdLike, BalanceLike, MathBalance};
 
 // TODO: Docs? What is this?
 #[derive(Encode, Decode, MaxEncodedLen, TypeInfo, Debug, Clone, PartialEq)]

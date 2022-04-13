@@ -45,6 +45,7 @@ std = [
   "scale-info/std",
   "xcm/std",
 ]
+test-utils = []
 visualization = ["plotters"]
 
 [package.metadata.cargo-udeps.ignore]
